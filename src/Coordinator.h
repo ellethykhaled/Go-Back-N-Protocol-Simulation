@@ -2,6 +2,7 @@
 #define __PROJECT_COORDINATOR_H_
 
 #include <omnetpp.h>
+#include "InitMessage_m.h"
 #include <iostream>
 #include <fstream>
 

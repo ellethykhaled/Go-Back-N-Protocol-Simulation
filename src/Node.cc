@@ -1,28 +1,49 @@
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Lesser General Public License for more details.
-// 
-// You should have received a copy of the GNU Lesser General Public License
-// along with this program.  If not, see http://www.gnu.org/licenses/.
-// 
-
 #include "Node.h"
-
 Define_Module(Node);
 
 void Node::initialize()
 {
-    // TODO - Generated method body
+    if(strcmp(getName(), "Node0"))
+        nodeNumber = 0;
+    else
+        nodeNumber = 1;
 }
 
 void Node::handleMessage(cMessage *msg)
 {
-    // TODO - Generated method body
+    int startTime = checkInit(msg);
+}
+
+int Node::checkInit(cMessage *msg)
+{
+    if (strcmp(msg->getName(), "Initialization") == 0)
+    {
+        InitMessage *receivedMessage = check_and_cast<InitMessage *>(msg);
+        if (receivedMessage != nullptr)
+        {
+            if (receivedMessage->getStartingNode() == nodeNumber)
+            {
+                isSender = true;
+                WS = receivedMessage->getWS();
+                TO = receivedMessage->getTO();
+                PT = receivedMessage->getPT();
+                TD = receivedMessage->getTD();
+                ED = receivedMessage->getED();
+                DD = receivedMessage->getDD();
+                // Returns the actual start time in case of being the sender
+                return receivedMessage->getStartTime();
+            }
+            else
+            {
+                isSender = false;
+                WS = 1;
+                PT = receivedMessage->getPT();
+                TD = receivedMessage->getTD();
+                LP = receivedMessage->getLP();
+                // Dummy return for the start time in case of being the receiver
+                return 0;
+            }
+        }
+    }
+    return -1;
 }
