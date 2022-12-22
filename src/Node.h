@@ -19,12 +19,13 @@ const int NACK = 2;
 
 #if !defined(MESSAGE_STATE)
 #define MESSAGE_STATE
-const std::string INIT = "Initialized";     // Indicates that the message is used for initialization
-const std::string FIRST = "First";          // Indicates that the message is the first message to be sent
-const std::string PROCESS_S = "Sender Processing";   // Indicates that the message is used when processing
-const std::string COMPLETE_S = "Sender Complete";    // Indicates that the message is used when ready to be sent
-const std::string PROCESS_R = "Receiver Processing";   // Indicates that the message is used when processing
-const std::string COMPLETE_R = "Receiver Complete";    // Indicates that the message is used when ready to be sent
+const std::string INIT = "Initialized";                 // Indicates that the message is used for initialization
+const std::string FIRST = "First";                      // Indicates that the message is the first message to be sent
+const std::string PROCESS_S = "Sender Processing";      // Indicates a self awaking message indicating finished processing (sender)
+const std::string COMPLETE_S = "Sender Complete";       // Used to mark data messages sent by sender
+const std::string PROCESS_R = "Receiver Processing";    // Indicates a self awaking message indicating finished processing (receiver)
+const std::string COMPLETE_R = "Receiver Complete";     // Used to mark control messages (ACK/NACK) sent by receiver
+const std::string TIMEOUT = "Timeout";                  // Indicates that the sender has timed out
 #endif
 
 
@@ -39,14 +40,16 @@ class Node : public cSimpleModule
     int nodeNumber;
     bool isSender;
     bool isProcessing;
-    bool endOfMessages;
 
-    int sequenceNumber;
-
+    // Used in case of sender
     FrameMessage * messageToSend;
     FrameMessage * duplicateMessageToSend;
+    int sequenceNumber;
+    bool endOfMessages;
 
+    // Used in case of receiver
     FrameMessage * receivedMessage;
+    int expectedSequenceNumber;
 
 
     // Network parameters received initially from the coordinator
@@ -60,21 +63,35 @@ class Node : public cSimpleModule
 
     int * errorCodes;
 
-    // A function that sets the parameters when the message is an initialization message returning the start time
-    // Otherwise returns -1
+    // A method that sets the parameters when the message is an initialization message returning the start time
     void initializeNode(cMessage *msg);
+
+    // Main methods for sender and receiver
     void handleSender(cMessage *msg);
     void handleReceiver(cMessage *msg);
+
+    // Methods used by sender for processing-sending
+    void startProcessing();
     void applyEffectAndSend();
-    void startProcessing(FrameMessage* messageToSend);
+
+    // Methods used by receiver for processing-sending
     void processReceivedMessage();
+    void sendReplyMessage();
+
+    // Destructor used for clearing all messages in the global queue
     ~Node();
 };
 
-int lineCount; // Used to determine the last line read
-std::queue<cMessage*> mQueue;
+int lineCount;                  // Used to determine the last line read
+std::queue<cMessage*> mQueue;   // A queue used to delete all messages when the simulation ends
+
+// A function used to read
 void readLineFromFile(int nodeNumber, int &errorCode, std::string &message);
+
+// A function used to add stuffing and framing
 std::string getStuffedMessage(std::string message);
+
+// A function used to calculate the parity byte given the message string
 std::string calculateParityByte(std::string message);
 
 #endif

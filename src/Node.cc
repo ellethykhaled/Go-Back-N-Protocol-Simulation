@@ -29,6 +29,7 @@ void Node::initializeNode(cMessage *msg)
     {
         if (receivedMessage->getStartingNode() == nodeNumber)
         {
+            // Setting the sender node parameters
             isSender = true;
             WS = receivedMessage->getWS();
             TO = receivedMessage->getTO();
@@ -47,11 +48,15 @@ void Node::initializeNode(cMessage *msg)
         }
         else
         {
+            // Setting the receiver node parameters
             isSender = false;
+            expectedSequenceNumber = 0;
             WS = receivedMessage->getWS();
             PT = receivedMessage->getPT();
             TD = receivedMessage->getTD();
             LP = receivedMessage->getLP();
+
+            // A queue used to delete all messages when the simulation ends
             mQueue.push(msg);
         }
     }
@@ -59,6 +64,8 @@ void Node::initializeNode(cMessage *msg)
 
 void Node::handleSender(cMessage *msg)
 {
+    // Sender should stick to the window size and respond to NACKs
+
     // In case of initialization from co-ordintor
     if (strcmp(msg->getName(), INIT.c_str()) == 0)
     {
@@ -66,11 +73,17 @@ void Node::handleSender(cMessage *msg)
         return;
     }
 
-    // In case of self awaking message (scheduleAt) -OR- TIMEOUT
+    // In case of self awaking message (scheduleAt)
     if (strcmp(msg->getName(), PROCESS_S.c_str()) == 0)
     {
         applyEffectAndSend();
         isProcessing = false;
+    }
+
+    // In case of TIMEOUT
+    if (strcmp(msg->getName(), TIMEOUT.c_str()) == 0)
+    {
+        // TODO
     }
 
     // In case of acknowledge or not acknowledge from the receiver
@@ -117,7 +130,7 @@ void Node::handleSender(cMessage *msg)
     if (sequenceNumber == WS)
         sequenceNumber = 0;
 
-    startProcessing(messageToSend);
+    startProcessing();
     isProcessing = true;
 }
 
@@ -133,10 +146,9 @@ void Node::handleReceiver(cMessage *msg)
     // In case of self awaking message (scheduleAt) [finished Processing]
     if (strcmp(msg->getName(), PROCESS_R.c_str()) == 0)
     {
-        isProcessing = false;
-
         receivedMessage = check_and_cast<FrameMessage *>(msg);
-        processReceivedMessage();
+        sendReplyMessage();
+        isProcessing = false;
         return;
     }
 
@@ -149,8 +161,9 @@ void Node::handleReceiver(cMessage *msg)
        receivedMessage = check_and_cast<FrameMessage *>(msg);
        if (receivedMessage != nullptr)
        {
-           receivedMessage->setName(PROCESS_R.c_str());
-           scheduleAt(simTime() + PT, receivedMessage);
+           if (receivedMessage->getHeader() != expectedSequenceNumber)
+               return;
+           processReceivedMessage();
        }
        return;
     }
@@ -235,7 +248,7 @@ std::string calculateParityByte(std::string message)
     return frameRepresentation[message.length()].to_string();
 }
 
-void Node::startProcessing(FrameMessage* messageToSend)
+void Node::startProcessing()
 {
     EV << "At [" << simTime() << "], Node [" << nodeNumber << "] introducing channel error with code = [" << errorCodes[messageToSend->getHeader()] << "]" << endl;
     isProcessing = true;
@@ -291,9 +304,17 @@ void Node::applyEffectAndSend()
 
 void Node::processReceivedMessage()
 {
+    receivedMessage->setName(PROCESS_R.c_str());
+    scheduleAt(simTime() + PT, receivedMessage);
+}
+
+void Node::sendReplyMessage()
+{
+    // Receiver should only accept the expected frame
+
     std::string isAck = "ACK";
     std::string parity = calculateParityByte(receivedMessage->getPayload());
-    int ackNum = receivedMessage->getHeader() + 1;
+    int ackNum = receivedMessage->getHeader();
     if (ackNum == WS)
         ackNum = 0;
     if (strcmp(parity.c_str(), receivedMessage->getTrailer()) != 0)
@@ -308,7 +329,10 @@ void Node::processReceivedMessage()
         receivedMessage->setName(COMPLETE_R.c_str());
         receivedMessage->setHeader(ackNum);
         if (strcmp(isAck.c_str(), "ACK") == 0)
+        {
             receivedMessage->setFrameType(ACK);
+            expectedSequenceNumber++;
+        }
         else
             receivedMessage->setFrameType(NACK);
 

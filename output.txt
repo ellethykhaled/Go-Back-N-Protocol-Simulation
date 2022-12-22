@@ -138,3 +138,35 @@ undisposed object: (FrameMessage) Network.Node1.Sender Complete -- check module 
 undisposed object: (FrameMessage) Network.Node1.Receiver Processing -- check module destructor
 
 End.
+OMNeT++ Discrete Event Simulation  (C) 1992-2022 Andras Varga, OpenSim Ltd.
+Version: 6.0.1, build: 220831-e4f07d04b8, edition: Academic Public License -- NOT FOR COMMERCIAL USE
+See the license for distribution terms and warranty disclaimer
+
+Setting up Qtenv...
+
+Loading NED files from .:  1
+Loading NED files from ../src:  3
+
+Loading images from 'images': *: 0 
+Loading images from 'D:\Programs\omnetpp-6.0.1\images': *: 0  abstract/*: 90  background/*: 4  block/*: 325  device/*: 195  logo/*: 3  maps/*: 9  misc/*: 70  msg/*: 55  old/*: 111  status/*: 28 
+
+undisposed object: (InitMessage) Network.Node1.Initialized -- check module destructor
+undisposed object: (FrameMessage) Network.Node1.Sender Complete -- check module destructor
+undisposed object: (FrameMessage) Network.Node1.Sender Complete -- check module destructor
+undisposed object: (FrameMessage) Network.Node1.Sender Complete -- check module destructor
+undisposed object: (FrameMessage) Network.Node1.Sender Complete -- check module destructor
+undisposed object: (FrameMessage) Network.Node1.Sender Complete -- check module destructor
+
+End.
+OMNeT++ Discrete Event Simulation  (C) 1992-2022 Andras Varga, OpenSim Ltd.
+Version: 6.0.1, build: 220831-e4f07d04b8, edition: Academic Public License -- NOT FOR COMMERCIAL USE
+See the license for distribution terms and warranty disclaimer
+
+Setting up Qtenv...
+
+Loading NED files from .:  1
+Loading NED files from ../src:  3
+
+Loading images from 'images': *: 0 
+Loading images from 'D:\Programs\omnetpp-6.0.1\images': *: 0  abstract/*: 90  background/*: 4  block/*: 325  device/*: 195  logo/*: 3  maps/*: 9  misc/*: 70  msg/*: 55  old/*: 111  status/*: 28 
+
