@@ -67,7 +67,7 @@ class Node : public cSimpleModule
     void handleReceiver(cMessage *msg);
     void applyEffectAndSend();
     void startProcessing(FrameMessage* messageToSend);
-    void processReceivedMessage(FrameMessage *msg);
+    void processReceivedMessage();
     ~Node();
 };
 

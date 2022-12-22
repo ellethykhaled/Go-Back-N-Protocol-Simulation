@@ -3,7 +3,7 @@ Define_Module(Node);
 
 void Node::initialize()
 {
-    if(strcmp(getName(), "Node0"))
+    if(strcmp(getName(), "Node0") == 0)
         nodeNumber = 0;
     else
         nodeNumber = 1;
@@ -48,7 +48,7 @@ void Node::initializeNode(cMessage *msg)
         else
         {
             isSender = false;
-            WS = 1;
+            WS = receivedMessage->getWS();
             PT = receivedMessage->getPT();
             TD = receivedMessage->getTD();
             LP = receivedMessage->getLP();
@@ -134,10 +134,9 @@ void Node::handleReceiver(cMessage *msg)
     if (strcmp(msg->getName(), PROCESS_R.c_str()) == 0)
     {
         isProcessing = false;
-        EV << "Receiver Processed" << receivedMessage->getPayload() << endl;
 
         receivedMessage = check_and_cast<FrameMessage *>(msg);
-        processReceivedMessage(receivedMessage);
+        processReceivedMessage();
         return;
     }
 
@@ -150,7 +149,6 @@ void Node::handleReceiver(cMessage *msg)
        receivedMessage = check_and_cast<FrameMessage *>(msg);
        if (receivedMessage != nullptr)
        {
-           EV << "At receiver: " << receivedMessage->getPayload() << endl;
            receivedMessage->setName(PROCESS_R.c_str());
            scheduleAt(simTime() + PT, receivedMessage);
        }
@@ -289,15 +287,39 @@ void Node::applyEffectAndSend()
             break;
     }
     EV << "At [" << simTime() << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << messageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modified << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
-//    EV << "Sender sending: " << messageToSend->getPayload() << endl;
 }
 
-void Node::processReceivedMessage(FrameMessage *message)
+void Node::processReceivedMessage()
 {
+    std::string isAck = "ACK";
+    std::string parity = calculateParityByte(receivedMessage->getPayload());
+    int ackNum = receivedMessage->getHeader() + 1;
+    if (ackNum == WS)
+        ackNum = 0;
+    if (strcmp(parity.c_str(), receivedMessage->getTrailer()) != 0)
+        isAck = "NACK";
+    std::string isLost = "No";
+    int chance = rand() % 9;
+    if (chance < 1)
+        isLost = "Yes";
+    EV << "At time " << simTime() << ", Node[" << nodeNumber << "] Sending [" << isAck << "] with number [" << ackNum << "], loss [" << isLost << "]\n";
+    if (strcmp(isLost.c_str(), "No") == 0)
+    {
+        receivedMessage->setName(COMPLETE_R.c_str());
+        receivedMessage->setHeader(ackNum);
+        if (strcmp(isAck.c_str(), "ACK") == 0)
+            receivedMessage->setFrameType(ACK);
+        else
+            receivedMessage->setFrameType(NACK);
+
+        sendDelayed(receivedMessage, simTime() + TD, "out");
+    }
 }
 
 Node::~Node()
 {
+    if (nodeNumber == 1)
+        return;
     int length = mQueue.size();
     for (int i = 0; i < length; i++)
     {
