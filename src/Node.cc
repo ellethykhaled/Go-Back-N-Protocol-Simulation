@@ -9,91 +9,152 @@ void Node::initialize()
         nodeNumber = 1;
     sequenceNumber = 0;
     lineCount = 0;
+    isProcessing = false;
+    endOfMessages = false;
 }
 
 void Node::handleMessage(cMessage *msg)
 {
-    int time = checkInit(msg);
+    std::string type;
     if (isSender)
-        handleSender(time, msg);
+        type = "sender";
     else
-        handleReceiver(time, msg);
+        type = "receiver";
+    EV << "Node" << nodeNumber << " handling as the " << type << endl;
+    if (isSender)
+        handleSender(msg);
+    else
+        handleReceiver(msg);
 }
 
-int Node::checkInit(cMessage *msg)
+void Node::initializeNode(cMessage *msg)
 {
-    if (strcmp(msg->getName(), "Initialization") == 0)
-    {
-        InitMessage *receivedMessage = check_and_cast<InitMessage *>(msg);
-        if (receivedMessage != nullptr)
-        {
-            if (receivedMessage->getStartingNode() == nodeNumber)
-            {
-                isSender = true;
-                WS = receivedMessage->getWS();
-                TO = receivedMessage->getTO();
-                PT = receivedMessage->getPT();
-                TD = receivedMessage->getTD();
-                ED = receivedMessage->getED();
-                DD = receivedMessage->getDD();
-                // Returns the actual start time in case of being the sender
-                return receivedMessage->getStartTime();
-            }
-            else
-            {
-                isSender = false;
-                WS = 1;
-                PT = receivedMessage->getPT();
-                TD = receivedMessage->getTD();
-                LP = receivedMessage->getLP();
-                // Dummy return for the start time in case of being the receiver
-                return 0;
-            }
-        }
-    }
-    return -1;
-}
-
-void Node::handleSender(int time, cMessage *msg)
-{
-    if (time != -1)
-    {
-        FrameMessage * messageToSend = new FrameMessage("");
-        // Rotating sequenceNumber
-        messageToSend->setHeader(sequenceNumber);
-
-        // Reading the next errorCode and message
-        int errorCode;
-        std::string message;
-        readLineFromFile(nodeNumber, errorCode, message);
-        message = getStuffedMessage(message);
-        messageToSend->setPayload(message.c_str());
-
-        std::string parity = calculateParityByte(message);
-        messageToSend->setTrailer(parity.c_str());
-
-        messageToSend->setFrameType(DATA);
-
-        messageToSend->setAckNumber(sequenceNumber++);
-        if (sequenceNumber == WS)
-            sequenceNumber = 0;
-
-        sendDelayed(messageToSend, 5, "out");
-        return;
-    }
-}
-
-void Node::handleReceiver(int time, cMessage *msg)
-{
-    // In case the message is just for initialization, return
-    if (time == 0)
-        return;
-    FrameMessage *receivedMessage = check_and_cast<FrameMessage *>(msg);
+    InitMessage *receivedMessage = check_and_cast<InitMessage *>(msg);
     if (receivedMessage != nullptr)
     {
-        EV << receivedMessage->getPayload() << endl;
+        if (receivedMessage->getStartingNode() == nodeNumber)
+        {
+            isSender = true;
+            WS = receivedMessage->getWS();
+            TO = receivedMessage->getTO();
+            PT = receivedMessage->getPT();
+            TD = receivedMessage->getTD();
+            ED = receivedMessage->getED();
+            DD = receivedMessage->getDD();
+
+            errorCodes = new int[WS];
+            // Returns the actual start time in case of being the sender
+            double startTime = receivedMessage->getStartTime();
+            cMessage * awaking = new cMessage(FIRST.c_str());
+            scheduleAt(simTime() + startTime, awaking);
+        }
+        else
+        {
+            isSender = false;
+            WS = 1;
+            PT = receivedMessage->getPT();
+            TD = receivedMessage->getTD();
+            LP = receivedMessage->getLP();
+        }
+    }
+}
+
+void Node::handleSender(cMessage *msg)
+{
+    // In case of initialization from co-ordintor
+    if (strcmp(msg->getName(), INIT.c_str()) == 0)
+    {
+        initializeNode(msg);
+        return;
     }
 
+    // In case of self awaking message (scheduleAt) -OR- TIMEOUT
+    if (strcmp(msg->getName(), PROCESS.c_str()) == 0)
+    {
+        FrameMessage* messageToSend = check_and_cast<FrameMessage *>(msg);
+        applyEffectAndSend(messageToSend);
+        isProcessing = false;
+    }
+
+    // In case of acknowledge or not acknowledge from the receiver
+    if (strcmp(msg->getName(), COMPLETE.c_str()) == 0)
+    {
+        EV << "ACK received" << endl;
+        return;
+    }
+
+    // Sets the node for the next event
+    if (endOfMessages)
+    {
+        EV << "End of messages from sender" << endl;
+        return;
+    }
+
+    FrameMessage * messageToSend = new FrameMessage(PROCESS.c_str());
+
+    // Reading the next errorCode and message
+    int errorCode;
+    std::string message;
+
+    readLineFromFile(nodeNumber, errorCode, message);
+    // If there is nothing more to read
+    if (message.empty())
+    {
+        endOfMessages = true;
+        return;
+    }
+
+    message = getStuffedMessage(message);
+
+    std::string parity = calculateParityByte(message);
+
+    // Setting the Data
+    messageToSend->setHeader(sequenceNumber);
+    messageToSend->setPayload(message.c_str());
+    messageToSend->setTrailer(parity.c_str());
+    messageToSend->setFrameType(DATA);
+    messageToSend->setAckNumber(sequenceNumber);
+    errorCodes[sequenceNumber++] = errorCode;
+    // Rotating sequenceNumber
+    if (sequenceNumber == WS)
+        sequenceNumber = 0;
+
+    startProcessing(messageToSend);
+
+    return;
+}
+
+void Node::handleReceiver(cMessage *msg)
+{
+    // In case the message is just for initialization, return
+    if (strcmp(msg->getName(), INIT.c_str()) == 0)
+    {
+       initializeNode(msg);
+       return;
+    }
+
+    // In case of self awaking message (scheduleAt) [finished Processing]
+    if (strcmp(msg->getName(), PROCESS.c_str()) == 0)
+    {
+        isProcessing = false;
+        FrameMessage *receivedMessage = check_and_cast<FrameMessage *>(msg);
+        processReceivedMessage(receivedMessage);
+        return;
+    }
+
+
+    if (strcmp(msg->getName(), COMPLETE.c_str()) == 0)
+    {
+       isProcessing = true;
+       FrameMessage *receivedMessage = check_and_cast<FrameMessage *>(msg);
+       if (receivedMessage != nullptr)
+       {
+           EV << "At receiver: " << receivedMessage->getPayload() << endl;
+           receivedMessage->setName(PROCESS.c_str());
+           scheduleAt(simTime() + PT, receivedMessage);
+       }
+       return;
+    }
 }
 
 
@@ -108,7 +169,9 @@ void readLineFromFile(int nodeNumber, int &errorCode, std::string &message)
     std::ifstream senderFile(fileName);
     std::string firstLine;
 
-    getline(senderFile, firstLine);
+    int i = 0;
+    while (i++ <= lineCount)
+        getline(senderFile, firstLine);
     lineCount++;
     senderFile.close();
 
@@ -171,4 +234,57 @@ std::string calculateParityByte(std::string message)
 //        EV << c << " " << frameRepresentation[i++] << endl;
 
     return frameRepresentation[message.length()].to_string();
+}
+
+void Node::startProcessing(FrameMessage* messageToSend)
+{
+    isProcessing = true;
+    scheduleAt(simTime() + PT, messageToSend);
+}
+
+void Node::applyEffectAndSend(FrameMessage *message)
+{
+    // Process - Processed - Send
+    EV << "Applying effect" << endl;
+    int sNumber = message->getHeader();
+    switch (errorCodes[sNumber])
+    {
+        case 0:         // No Error
+        {
+            EV << "Sender sending message with no errors" << endl;
+            sendDelayed(message, simTime() + TD, "out");
+            break;
+        }
+        case 1:         // Delay
+        {
+            EV << "Sender sending message with delay" << endl;
+            sendDelayed(message, simTime() + TD + ED, "out");
+            break;
+        }
+        case 2:         // Duplication
+        {
+            FrameMessage* message2 = message->dup();
+            sendDelayed(message, simTime() + TD, "out");
+            sendDelayed(message2, simTime() + TD + DD, "out");
+            break;
+        }
+        case 3:         // Delay & Duplication
+        {
+            FrameMessage* message2 = message->dup();
+            sendDelayed(message, simTime() + TD + ED, "out");
+            sendDelayed(message2, simTime() + TD + ED + DD, "out");
+            break;
+        }
+        case 4:         // Loss
+    //        sendDelayed(message, simTime() + PT + DT, "out");
+            break;
+        default:
+            break;
+    }
+    EV << "Message being sent" << endl;
+}
+
+void Node::processReceivedMessage(FrameMessage *message)
+{
+
 }

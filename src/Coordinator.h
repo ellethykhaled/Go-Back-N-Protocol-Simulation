@@ -6,6 +6,13 @@
 #include <fstream>
 #include "InitMessage_m.h"
 
+#if !defined(MESSAGE_STATE)
+#define MESSAGE_STATE
+const std::string INIT = "Initialized";     // Indicates that the message is used for initialization
+const std::string PROCESS = "Processing";   // Indicates that the message is used when processing
+const std::string COMPLETE = "Complete";    // Indicates that the message is used when ready to be sent
+#endif
+
 using namespace omnetpp;
 
 class Coordinator : public cSimpleModule

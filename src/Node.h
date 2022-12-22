@@ -16,6 +16,14 @@ const int ACK = 1;
 const int NACK = 2;
 #endif
 
+#if !defined(MESSAGE_STATE)
+#define MESSAGE_STATE
+const std::string INIT = "Initialized";     // Indicates that the message is used for initialization
+const std::string FIRST = "First";          // Indicates that the message is the first message to be sent
+const std::string PROCESS = "Processing";   // Indicates that the message is used when processing
+const std::string COMPLETE = "Complete";    // Indicates that the message is used when ready to be sent
+#endif
+
 
 using namespace omnetpp;
 
@@ -27,6 +35,8 @@ class Node : public cSimpleModule
   private:
     int nodeNumber;
     bool isSender;
+    bool isProcessing;
+    bool endOfMessages;
 
     int sequenceNumber;
 
@@ -39,11 +49,16 @@ class Node : public cSimpleModule
     double DD;
     double LP;
 
+    int * errorCodes;
+
     // A function that sets the parameters when the message is an initialization message returning the start time
     // Otherwise returns -1
-    int checkInit(cMessage *msg);
-    void handleSender(int time, cMessage *msg);
-    void handleReceiver(int time, cMessage *msg);
+    void initializeNode(cMessage *msg);
+    void handleSender(cMessage *msg);
+    void handleReceiver(cMessage *msg);
+    void applyEffectAndSend(FrameMessage *msg);
+    void startProcessing(FrameMessage* messageToSend);
+    void processReceivedMessage(FrameMessage *msg);
 };
 
 int lineCount; // Used to determine the last line read

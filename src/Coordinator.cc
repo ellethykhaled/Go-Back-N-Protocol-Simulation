@@ -17,7 +17,7 @@ void Coordinator::handleMessage(cMessage *msg)
 
 void Coordinator::initializeNodes(int startTime, int startingNodeNumber)
 {
-    InitMessage * initMsgSender = new InitMessage("Initialization");
+    InitMessage * initMsgSender = new InitMessage(INIT.c_str());
     initMsgSender->setWS(WS);
     initMsgSender->setTO(TO);
     initMsgSender->setPT(PT);
@@ -27,7 +27,7 @@ void Coordinator::initializeNodes(int startTime, int startingNodeNumber)
     initMsgSender->setStartTime(startTime);
     initMsgSender->setStartingNode(startingNodeNumber);
 
-    InitMessage * initMsgReceiver = new InitMessage("Initialization");
+    InitMessage * initMsgReceiver = new InitMessage(INIT.c_str());
     initMsgReceiver->setPT(PT);
     initMsgReceiver->setTD(TD);
     initMsgReceiver->setLP(LP);
