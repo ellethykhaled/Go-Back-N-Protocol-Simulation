@@ -44,8 +44,10 @@ class Node : public cSimpleModule
     // Used in case of sender
     FrameMessage * messageToSend;
     FrameMessage * duplicateMessageToSend;
+    cMessage * timeoutMessage;
     int sequenceNumber;
     bool endOfMessages;
+    int lastAckReceived;
 
     // Used in case of receiver
     FrameMessage * receivedMessage;
@@ -62,6 +64,7 @@ class Node : public cSimpleModule
     double LP;
 
     int * errorCodes;
+    int errorFreeLine;
 
     // A method that sets the parameters when the message is an initialization message returning the start time
     void initializeNode(cMessage *msg);
@@ -73,6 +76,7 @@ class Node : public cSimpleModule
     // Methods used by sender for processing-sending
     void startProcessing();
     void applyEffectAndSend();
+    void setTimeout();
 
     // Methods used by receiver for processing-sending
     void processReceivedMessage();

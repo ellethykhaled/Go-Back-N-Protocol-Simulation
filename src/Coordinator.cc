@@ -28,7 +28,7 @@ void Coordinator::initializeNodes(int startTime, int startingNodeNumber)
     initMsgSender->setStartingNode(startingNodeNumber);
 
     InitMessage * initMsgReceiver = new InitMessage(INIT.c_str());
-    initMsgSender->setWS(WS);
+    initMsgReceiver->setWS(WS);
     initMsgReceiver->setPT(PT);
     initMsgReceiver->setTD(TD);
     initMsgReceiver->setLP(LP);
