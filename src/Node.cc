@@ -53,6 +53,7 @@ void Node::initializeNode(cMessage *msg)
             // Setting the receiver node parameters
             isSender = false;
             expectedSequenceNumber = 0;
+            whenFree = 0;
             WS = receivedMessage->getWS();
             PT = receivedMessage->getPT();
             TD = receivedMessage->getTD();
@@ -97,7 +98,7 @@ void Node::handleSender(cMessage *msg)
 
         EV << "Timeout event at time [" << simTime() << "], at Node[" << nodeNumber << "] for frame with seq_num = [" << failedSequenceNumber << "]\n";
 
-        lineCount -= WS;
+        lineCount -= WS - 1;        // Satr ebn kalb daya3ly youm (needs a -1 to prevent halting) :D
         if (lineCount < 0)
             lineCount = 0;
         errorFreeLine = lineCount;
@@ -182,13 +183,25 @@ void Node::handleReceiver(cMessage *msg)
 
     if (strcmp(msg->getName(), COMPLETE_S.c_str()) == 0)
     {
-       if (isProcessing)
-           return;
+       if (simTime() < whenFree)
+       {
+//          EV << "Refused by receiver, simTime = " << simTime() << " and free at " << whenFree << endl;
+          return;
+       }
+//       if (isProcessing)
+//       {
+//           EV << "Refused by received\n";
+//           return;
+//       }
        receivedMessage = check_and_cast<FrameMessage *>(msg);
        if (receivedMessage != nullptr)
        {
            if (receivedMessage->getHeader() != expectedSequenceNumber)
+           {
+//               EV << "Refused by receiver, expected " << expectedSequenceNumber << " and got " << receivedMessage->getHeader() << endl;
                return;
+           }
+//           EV << "Accepted by receiver, processing...\n";
            isProcessing = true;
            processReceivedMessage();
        }
@@ -197,7 +210,7 @@ void Node::handleReceiver(cMessage *msg)
 
 void Node::startProcessing()
 {
-    EV << "At [" << simTime() << "], Node [" << nodeNumber << "] introducing channel error with code = [" << errorCodes[messageToSend->getHeader()] << "]" << endl;
+    EV << "At time [" << simTime() << "], Node [" << nodeNumber << "] introducing channel error with code = [" << errorCodes[messageToSend->getHeader()] << "]" << endl;
     isProcessing = true;
     scheduleAt(simTime() + PT, messageToSend);
 }
@@ -368,16 +381,17 @@ void Node::applyEffectAndSend()
         default:
             break;
     }
-    EV << "At [" << simTime() << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << messageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
+    EV << "At time [" << simTime() << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << messageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
     if (duplicateNumber++ > 0)
-        EV << "At [" << simTime() + DD << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << messageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
+        EV << "At time [" << simTime() + DD << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << messageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
 
 }
 
 void Node::processReceivedMessage()
 {
     receivedMessage->setName(PROCESS_R.c_str());
-    scheduleAt(simTime() + PT, receivedMessage);
+    whenFree = simTime() + PT;
+    scheduleAt(whenFree, receivedMessage);
 }
 
 void Node::sendReplyMessage()

@@ -40,6 +40,7 @@ class Node : public cSimpleModule
     int nodeNumber;
     bool isSender;
     bool isProcessing;
+    simtime_t whenFree;
 
     // Used in case of sender
     FrameMessage * messageToSend;
