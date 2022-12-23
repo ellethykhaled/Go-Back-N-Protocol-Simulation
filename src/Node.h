@@ -94,4 +94,7 @@ std::string getStuffedMessage(std::string message);
 // A function used to calculate the parity byte given the message string
 std::string calculateParityByte(std::string message);
 
+// A function that applies modification to the payload
+std::string modifyPayload(std::string payload, int& bitNumber);
+
 #endif
