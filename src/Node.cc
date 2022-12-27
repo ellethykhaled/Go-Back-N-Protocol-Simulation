@@ -43,6 +43,7 @@ void Node::initializeNode(cMessage *msg)
             errorFreeLine = -1;
             // Returns the actual start time in case of being the sender
             double startTime = receivedMessage->getStartTime();
+            timeoutMessage = new cMessage(TIMEOUT.c_str());
             cMessage * awaking = new cMessage(FIRST.c_str());
             mQueue.push(msg);
             mQueue.push(awaking);
@@ -67,8 +68,6 @@ void Node::initializeNode(cMessage *msg)
 
 void Node::handleSender(cMessage *msg)
 {
-    // Sender should stick to the window size and respond to NACKs
-
     // In case of initialization from co-ordintor
     if (strcmp(msg->getName(), INIT.c_str()) == 0)
     {
@@ -98,25 +97,35 @@ void Node::handleSender(cMessage *msg)
 
         EV << "Timeout event at time [" << simTime() << "], at Node[" << nodeNumber << "] for frame with seq_num = [" << failedSequenceNumber << "]\n";
 
-        lineCount -= WS - 1;        // Satr ebn kalb daya3ly youm (needs a -1 to prevent halting) :D
+        lineCount -= WS;
+
         if (lineCount < 0)
             lineCount = 0;
         errorFreeLine = lineCount;
+        EV << "Going back to line " << lineCount <<"\n";
     }
 
     // In case of acknowledge or not acknowledge from the receiver
     if (strcmp(msg->getName(), COMPLETE_R.c_str()) == 0)
     {
-        cancelAndDelete(timeoutMessage);
+        cancelEvent(timeoutMessage);
+//        EV << "At time "<< simTime() << " cancelled timeout\n";
         receivedMessage = check_and_cast<FrameMessage *>(msg);
         if (receivedMessage->getFrameType() == ACK)
             lastAckReceived = receivedMessage->getHeader();
         else
         {
+            int receivedNackNumber = receivedMessage->getHeader();
+//            while (receivedNackNumber != lineCount % WS)
+//                lineCount--;
+//            errorFreeLine = lineCount;
             EV << "At time [" << simTime() << "], at Node[" << nodeNumber << "] received NACK with seq_num = [" << lastAckReceived << "]\n";
             return;
         }
         EV << "At time [" << simTime() << "], at Node[" << nodeNumber << "] received ACK with seq_num = [" << lastAckReceived << "]\n";
+        delete receivedMessage;
+        if (isProcessing)
+            return;
     }
 
     // Sets the node for the next event
@@ -148,15 +157,13 @@ void Node::handleSender(cMessage *msg)
     std::string parity = calculateParityByte(message);
 
     // Setting the Data
+    sequenceNumber = (lineCount - 1) % WS;       // Rotating sequence number
     messageToSend->setHeader(sequenceNumber);
     messageToSend->setPayload(message.c_str());
     messageToSend->setTrailer(parity.c_str());
     messageToSend->setFrameType(DATA);
     messageToSend->setAckNumber(sequenceNumber);
-    errorCodes[sequenceNumber++] = errorCode;
-    // Rotating sequenceNumber
-    if (sequenceNumber == WS)
-        sequenceNumber = 0;
+    errorCodes[sequenceNumber] = errorCode;
 
     startProcessing();
     isProcessing = true;
@@ -184,24 +191,21 @@ void Node::handleReceiver(cMessage *msg)
     if (strcmp(msg->getName(), COMPLETE_S.c_str()) == 0)
     {
        if (simTime() < whenFree)
-       {
-//          EV << "Refused by receiver, simTime = " << simTime() << " and free at " << whenFree << endl;
           return;
-       }
-//       if (isProcessing)
-//       {
-//           EV << "Refused by received\n";
-//           return;
-//       }
+
        receivedMessage = check_and_cast<FrameMessage *>(msg);
        if (receivedMessage != nullptr)
        {
+//           int nextExpected = expectedSequenceNumber + 1;
+//           if (nextExpected == WS)
+//               nextExpected = 0;
+//           bool iAmTheChosenOne = receivedMessage->getHeader() == nextExpected && whenFree == simTime();
            if (receivedMessage->getHeader() != expectedSequenceNumber)
            {
-//               EV << "Refused by receiver, expected " << expectedSequenceNumber << " and got " << receivedMessage->getHeader() << endl;
+//               EV << "At time " << simTime() <<" received refused the message, expected " << expectedSequenceNumber << " and got " << receivedMessage->getHeader() << endl;
                return;
            }
-//           EV << "Accepted by receiver, processing...\n";
+
            isProcessing = true;
            processReceivedMessage();
        }
@@ -217,8 +221,9 @@ void Node::startProcessing()
 
 void Node::applyEffectAndSend()
 {
-    messageToSend->setName(COMPLETE_S.c_str());
-    int sNumber = messageToSend->getHeader();
+    FrameMessage * actualMessageToSend = messageToSend->dup();
+    actualMessageToSend->setName(COMPLETE_S.c_str());
+    int sNumber = actualMessageToSend->getHeader();
     std::string isLost = "No";
     int duplicateNumber = 0;
     int delay = 0;
@@ -227,60 +232,59 @@ void Node::applyEffectAndSend()
     {
         case 0:         // No Error
         {
-            sendDelayed(messageToSend, TD, "out");
-
+            sendDelayed(actualMessageToSend, TD, "out");
             break;
         }
         case 1:         // Delay
         {
             delay = ED;
 
-            sendDelayed(messageToSend, TD + ED, "out");
+            sendDelayed(actualMessageToSend, TD + ED, "out");
 
             break;
         }
-        case 2:         // Duplication
+        case 10:         // Duplication
         {
-            duplicateMessageToSend = messageToSend->dup();
+            duplicateMessageToSend = actualMessageToSend->dup();
             duplicateNumber++;
 
-            sendDelayed(messageToSend, TD, "out");
+            sendDelayed(actualMessageToSend, TD, "out");
             sendDelayed(duplicateMessageToSend, TD + DD, "out");
 
             break;
         }
-        case 3:         // Duplication & Delay
+        case 11:         // Duplication & Delay
         {
             delay = ED;
 
-            duplicateMessageToSend = messageToSend->dup();
+            duplicateMessageToSend = actualMessageToSend->dup();
             duplicateNumber++;
 
-            sendDelayed(messageToSend, TD + ED, "out");
+            sendDelayed(actualMessageToSend, TD + ED, "out");
             sendDelayed(duplicateMessageToSend, TD + ED + DD, "out");
 
             break;
         }
-        case 4:         // Loss
+        case 100:         // Loss
         {
             isLost = "Yes";
             break;
         }
-        case 5:         // Loss & Delay
+        case 101:         // Loss & Delay
         {
             delay = ED;
 
             isLost = "Yes";
             break;
         }
-        case 6:         // Loss & Duplication
+        case 110:         // Loss & Duplication
         {
             duplicateNumber++;
 
             isLost = "Yes";
             break;
         }
-        case 7:         // Loss, Duplication & Delay
+        case 111:         // Loss, Duplication & Delay
         {
             delay = ED;
 
@@ -289,88 +293,88 @@ void Node::applyEffectAndSend()
             isLost = "Yes";
             break;
         }
-        case 8:         // Modification
+        case 1000:         // Modification
         {
-            std::string modifiedPayload = modifyPayload(messageToSend->getPayload(), modifiedByteNumber);
-            messageToSend->setPayload(modifiedPayload.c_str());
+            std::string modifiedPayload = modifyPayload(actualMessageToSend->getPayload(), modifiedByteNumber);
+            actualMessageToSend->setPayload(modifiedPayload.c_str());
 
-            sendDelayed(messageToSend, TD, "out");
+            sendDelayed(actualMessageToSend, TD, "out");
 
             break;
         }
-        case 9:         // Modification & Delay
+        case 1001:         // Modification & Delay
         {
             delay = ED;
 
-            std::string modifiedPayload = modifyPayload(messageToSend->getPayload(), modifiedByteNumber);
-            messageToSend->setPayload(modifiedPayload.c_str());
+            std::string modifiedPayload = modifyPayload(actualMessageToSend->getPayload(), modifiedByteNumber);
+            actualMessageToSend->setPayload(modifiedPayload.c_str());
 
-            sendDelayed(messageToSend, TD + ED, "out");
+            sendDelayed(actualMessageToSend, TD + ED, "out");
 
             break;
         }
-        case 10:         // Modification & Duplication
+        case 1010:         // Modification & Duplication
         {
-            std::string modifiedPayload = modifyPayload(messageToSend->getPayload(), modifiedByteNumber);
-            messageToSend->setPayload(modifiedPayload.c_str());
+            std::string modifiedPayload = modifyPayload(actualMessageToSend->getPayload(), modifiedByteNumber);
+            actualMessageToSend->setPayload(modifiedPayload.c_str());
 
-            duplicateMessageToSend = messageToSend->dup();
+            duplicateMessageToSend = actualMessageToSend->dup();
             duplicateNumber++;
 
-            sendDelayed(messageToSend, TD, "out");
+            sendDelayed(actualMessageToSend, TD, "out");
             sendDelayed(duplicateMessageToSend, TD + DD, "out");
 
             break;
         }
-        case 11:         // Modification, Duplication & Delay
+        case 1011:         // Modification, Duplication & Delay
         {
             delay = ED;
 
-            std::string modifiedPayload = modifyPayload(messageToSend->getPayload(), modifiedByteNumber);
-            messageToSend->setPayload(modifiedPayload.c_str());
+            std::string modifiedPayload = modifyPayload(actualMessageToSend->getPayload(), modifiedByteNumber);
+            actualMessageToSend->setPayload(modifiedPayload.c_str());
 
-            duplicateMessageToSend = messageToSend->dup();
+            duplicateMessageToSend = actualMessageToSend->dup();
             duplicateNumber++;
 
-            sendDelayed(messageToSend, TD + ED, "out");
+            sendDelayed(actualMessageToSend, TD + ED, "out");
             sendDelayed(duplicateMessageToSend, TD + ED + DD, "out");
 
             break;
         }
-        case 12:         // Modification & Loss
+        case 1100:         // Modification & Loss
         {
-            std::string modifiedPayload = modifyPayload(messageToSend->getPayload(), modifiedByteNumber);
-            messageToSend->setPayload(modifiedPayload.c_str());
+            std::string modifiedPayload = modifyPayload(actualMessageToSend->getPayload(), modifiedByteNumber);
+            actualMessageToSend->setPayload(modifiedPayload.c_str());
 
             isLost = "Yes";
             break;
         }
-        case 13:         // Modification, Loss & Delay
+        case 1101:         // Modification, Loss & Delay
         {
             delay = ED;
 
-            std::string modifiedPayload = modifyPayload(messageToSend->getPayload(), modifiedByteNumber);
-            messageToSend->setPayload(modifiedPayload.c_str());
+            std::string modifiedPayload = modifyPayload(actualMessageToSend->getPayload(), modifiedByteNumber);
+            actualMessageToSend->setPayload(modifiedPayload.c_str());
 
             isLost = "Yes";
             break;
         }
-        case 14:         // Modification, Loss & Duplication
+        case 1110:         // Modification, Loss & Duplication
         {
-            std::string modifiedPayload = modifyPayload(messageToSend->getPayload(), modifiedByteNumber);
-            messageToSend->setPayload(modifiedPayload.c_str());
+            std::string modifiedPayload = modifyPayload(actualMessageToSend->getPayload(), modifiedByteNumber);
+            actualMessageToSend->setPayload(modifiedPayload.c_str());
 
             duplicateNumber++;
 
             isLost = "Yes";
             break;
         }
-        case 15:         // Modification, Loss, Duplication & Delay
+        case 1111:         // Modification, Loss, Duplication & Delay
         {
             delay = ED;
 
-            std::string modifiedPayload = modifyPayload(messageToSend->getPayload(), modifiedByteNumber);
-            messageToSend->setPayload(modifiedPayload.c_str());
+            std::string modifiedPayload = modifyPayload(actualMessageToSend->getPayload(), modifiedByteNumber);
+            actualMessageToSend->setPayload(modifiedPayload.c_str());
 
             duplicateNumber++;
 
@@ -381,9 +385,9 @@ void Node::applyEffectAndSend()
         default:
             break;
     }
-    EV << "At time [" << simTime() << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << messageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
+    EV << "At time [" << simTime() << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << actualMessageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
     if (duplicateNumber++ > 0)
-        EV << "At time [" << simTime() + DD << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << messageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
+        EV << "At time [" << simTime() + DD << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << actualMessageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
 
 }
 
@@ -391,7 +395,7 @@ void Node::processReceivedMessage()
 {
     receivedMessage->setName(PROCESS_R.c_str());
     whenFree = simTime() + PT;
-    scheduleAt(whenFree, receivedMessage);
+    scheduleAt(whenFree - SIM_MANIP, receivedMessage);
 }
 
 void Node::sendReplyMessage()
@@ -409,7 +413,7 @@ void Node::sendReplyMessage()
     int chance = rand() % 9;
     if (chance < LP * 10)
         isLost = "Yes";
-    EV << "At time [" << simTime() << "], Node[" << nodeNumber << "] Sending [" << isAck << "] with number [" << ackNum << "], loss [" << isLost << "]\n";
+    EV << "At time [" << simTime() + SIM_MANIP << "], Node[" << nodeNumber << "] Sending [" << isAck << "] with number [" << ackNum << "], loss [" << isLost << "]\n";
 
     receivedMessage->setName(COMPLETE_R.c_str());
     receivedMessage->setHeader(ackNum);
@@ -425,12 +429,14 @@ void Node::sendReplyMessage()
         receivedMessage->setFrameType(NACK);
 
     if (strcmp(isLost.c_str(), "No") == 0)
-        sendDelayed(receivedMessage, TD, "out");
+        sendDelayed(receivedMessage, TD + SIM_MANIP, "out");
 }
 
 void Node::setTimeout()
-{
-    timeoutMessage = new cMessage(TIMEOUT.c_str());
+{ // Timeout should be set according to the oldest frame sent
+    // Cancel any scheduled timeout and set a new one
+    if (timeoutMessage->isScheduled())
+        cancelEvent(timeoutMessage);
     scheduleAt(simTime() + TO, timeoutMessage);
 }
 

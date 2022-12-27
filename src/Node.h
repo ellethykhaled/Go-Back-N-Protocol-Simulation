@@ -52,7 +52,10 @@ class Node : public cSimpleModule
 
     // Used in case of receiver
     FrameMessage * receivedMessage;
+    FrameMessage * messageToProcess;
+    std::queue<FrameMessage*> receivedMessages;
     int expectedSequenceNumber;
+    simtime_t SIM_MANIP = 0.01;
 
 
     // Network parameters received initially from the coordinator
