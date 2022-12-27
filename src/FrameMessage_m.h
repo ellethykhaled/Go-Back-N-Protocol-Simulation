@@ -25,7 +25,7 @@ class FrameMessage;
  *     int header;
  *     string payload;
  *     string trailer;
- *     int frameType;
+ *     int frameType;		// Data - ACK - NACK
  *     int ackNumber;
  * }
  * </pre>

@@ -3,19 +3,23 @@ Define_Module(Node);
 
 void Node::initialize()
 {
+    // Initializing the node number for each node
     if(strcmp(getName(), "Node0") == 0)
         nodeNumber = 0;
     else
         nodeNumber = 1;
-    sequenceNumber = 0;
-    lineCount = 0;
-    isProcessing = false;
-    endOfMessages = false;
+
+    // Setting the essential variables used
+    sequenceNumber = 0;     // Used by sender & receiver
+    lineCount = 0;          // Used by sender
+    isProcessing = false;   // Used by sender
+    endOfMessages = false;  // Used by sender
 
 }
 
 void Node::handleMessage(cMessage *msg)
 {
+    // Send the message to the appropriate handler
     if (isSender)
         handleSender(msg);
     else
@@ -39,14 +43,15 @@ void Node::initializeNode(cMessage *msg)
             DD = receivedMessage->getDD();
 
             errorCodes = new int[WS];
+            timeoutsAt = new simtime_t[WS];
+            for (int i = 0; i < WS; i++)
+                timeoutsAt[i] = INF;        // A great time instance
             lastAckReceived = WS - 1;
             errorFreeLine = -1;
             // Returns the actual start time in case of being the sender
             double startTime = receivedMessage->getStartTime();
             timeoutMessage = new cMessage(TIMEOUT.c_str());
             cMessage * awaking = new cMessage(FIRST.c_str());
-            mQueue.push(msg);
-            mQueue.push(awaking);
             scheduleAt(simTime() + startTime, awaking);
         }
         else
@@ -59,9 +64,6 @@ void Node::initializeNode(cMessage *msg)
             PT = receivedMessage->getPT();
             TD = receivedMessage->getTD();
             LP = receivedMessage->getLP();
-
-            // A queue used to delete all messages when the simulation ends
-            mQueue.push(msg);
         }
     }
 }
@@ -80,11 +82,9 @@ void Node::handleSender(cMessage *msg)
     {
         applyEffectAndSend();
         isProcessing = false;
+        setTimeout();
         if (sequenceNumber == lastAckReceived)
-        {
-            setTimeout();
             return;
-        }
     }
 
     // In case of TIMEOUT
@@ -95,13 +95,19 @@ void Node::handleSender(cMessage *msg)
         if (failedSequenceNumber == WS)
             failedSequenceNumber = 0;
 
-        EV << "Timeout event at time [" << simTime() << "], at Node[" << nodeNumber << "] for frame with seq_num = [" << failedSequenceNumber << "]\n";
+        EV << "Timeout event at time [" << simTime() << "], at Node[" << nodeNumber << "] with lineCount " << lineCount << " and minimumLineCount " << minimumLineCount << " for frame with seq_num = [" << failedSequenceNumber << "]\n";
 
-        lineCount -= WS;
-
+        if (!endOfMessages)
+            lineCount -= WS;        // Should get back to the correct line
+        else
+            lineCount = minimumLineCount - 1;
         if (lineCount < 0)
             lineCount = 0;
+//        lineCount = minimumLineCount;
         errorFreeLine = lineCount;
+        for (int i = 0; i < WS; i++)
+            timeoutsAt[i] = INF;
+        endOfMessages = false;
         EV << "Going back to line " << lineCount <<"\n";
     }
 
@@ -112,13 +118,30 @@ void Node::handleSender(cMessage *msg)
 //        EV << "At time "<< simTime() << " cancelled timeout\n";
         receivedMessage = check_and_cast<FrameMessage *>(msg);
         if (receivedMessage->getFrameType() == ACK)
-            lastAckReceived = receivedMessage->getHeader();
+        {
+            for (int i = 0; i < WS; i++)
+            {
+                lastAckReceived++;
+                if (lastAckReceived == WS)
+                    lastAckReceived = 0;
+                timeoutsAt[lastAckReceived] = INF;
+                if (lastAckReceived == receivedMessage->getHeader())
+                    break;
+            }
+            // MimimumLineCount should be adjusted
+            minimumLineCount = lineCount - WS;
+            if (minimumLineCount < 0)
+                minimumLineCount = 0;
+            minimumLineCount += lastAckReceived + 1;
+//            lastAckReceived = receivedMessage->getHeader();
+            setTimeout();
+        }
         else
         {
             int receivedNackNumber = receivedMessage->getHeader();
-//            while (receivedNackNumber != lineCount % WS)
-//                lineCount--;
-//            errorFreeLine = lineCount;
+            while (receivedNackNumber != lineCount % WS)
+                lineCount--;
+            errorFreeLine = lineCount;
             EV << "At time [" << simTime() << "], at Node[" << nodeNumber << "] received NACK with seq_num = [" << lastAckReceived << "]\n";
             return;
         }
@@ -131,12 +154,20 @@ void Node::handleSender(cMessage *msg)
     // Sets the node for the next event
     if (endOfMessages)
     {
-        EV << "End of messages from sender" << endl;
+        bool isFinale = true;
+        for (int i = 0; i < WS; i++)
+            if (timeoutsAt[i] < INF)
+                isFinale = false;
+
+        if (isFinale)
+        {
+            terminateConnection();
+        }
+
         return;
     }
 
     messageToSend = new FrameMessage(PROCESS_S.c_str());
-    mQueue.push(messageToSend);
 
     // Reading the next errorCode and message
     int errorCode;
@@ -164,6 +195,7 @@ void Node::handleSender(cMessage *msg)
     messageToSend->setFrameType(DATA);
     messageToSend->setAckNumber(sequenceNumber);
     errorCodes[sequenceNumber] = errorCode;
+    timeoutsAt[sequenceNumber] = simTime() + PT + TO;
 
     startProcessing();
     isProcessing = true;
@@ -385,7 +417,7 @@ void Node::applyEffectAndSend()
         default:
             break;
     }
-    EV << "At time [" << simTime() << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << actualMessageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
+    EV << "At time [" << simTime() << "], Node [" << nodeNumber << "] read line [" << lineCount - 1 << "] [sent] frame with seq_num = [" << actualMessageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
     if (duplicateNumber++ > 0)
         EV << "At time [" << simTime() + DD << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << actualMessageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
 
@@ -435,25 +467,22 @@ void Node::sendReplyMessage()
 void Node::setTimeout()
 { // Timeout should be set according to the oldest frame sent
     // Cancel any scheduled timeout and set a new one
+    int min = 0;
+    for (int i = 0; i < WS; i++)
+        if (timeoutsAt[i] < timeoutsAt[min])
+            min = i;
     if (timeoutMessage->isScheduled())
         cancelEvent(timeoutMessage);
-    scheduleAt(simTime() + TO, timeoutMessage);
+    scheduleAt(timeoutsAt[min], timeoutMessage);
+//    scheduleAt(simTime() + TO, timeoutMessage);
 }
 
-Node::~Node()
+void Node::terminateConnection()
 {
-    if (nodeNumber == 1)
-        return;
-    int length = mQueue.size();
-    for (int i = 0; i < length; i++)
-    {
-        cMessage* m = mQueue.front();
-        mQueue.pop();
-        delete m;
-    }
+    EV << "End of messages from sender, terminating connection..." << endl;
+    // Canceling the dummy timeout set at infinity
+    cancelEvent(timeoutMessage);
 }
-
-
 
 void readLineFromFile(int nodeNumber, int &errorCode, std::string &message)
 {

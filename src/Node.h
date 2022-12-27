@@ -28,6 +28,11 @@ const std::string COMPLETE_R = "Receiver Complete";     // Used to mark control 
 const std::string TIMEOUT = "Timeout";                  // Indicates that the sender has timed out
 #endif
 
+#if !defined(INFINITY_TIME)
+#define INFINITY_TIME
+const int INF = 10000;
+#endif
+
 
 using namespace omnetpp;
 
@@ -43,32 +48,35 @@ class Node : public cSimpleModule
     simtime_t whenFree;
 
     // Used in case of sender
-    FrameMessage * messageToSend;
-    FrameMessage * duplicateMessageToSend;
-    cMessage * timeoutMessage;
+    FrameMessage * messageToSend;           // Used to be sent as the main message
+    FrameMessage * duplicateMessageToSend;  // Used to be sent as the duplicate message
+    cMessage * timeoutMessage;              // Used as a self awaking message in case of timeout
     int sequenceNumber;
-    bool endOfMessages;
-    int lastAckReceived;
+    bool endOfMessages;                     // A boolean indicating the end of messages in the node input file
+    int lastAckReceived;                    // Stores the number of last Acknowledgment received
+    int minimumLineCount;                   // Stores the lower bound when "Going Back N"
 
     // Used in case of receiver
-    FrameMessage * receivedMessage;
-    FrameMessage * messageToProcess;
-    std::queue<FrameMessage*> receivedMessages;
-    int expectedSequenceNumber;
-    simtime_t SIM_MANIP = 0.01;
+    FrameMessage * receivedMessage;         // Used to hold the received message
+    FrameMessage * messageToProcess;        // Used to gold the message being processed
+    int expectedSequenceNumber;             // Holds the number of the next frame to accept
+
+    simtime_t SIM_MANIP = 0.01;             // A number used to manipulate the simulation at receiver
+                                            // The received gives undefined errors when processing two messages at the same time
 
 
     // Network parameters received initially from the coordinator
-    int WS;
-    double TO;
-    double PT;
-    double TD;
-    double ED;
-    double DD;
-    double LP;
+    int WS;         // Window Size
+    double TO;      // Timeout
+    double PT;      // Processing Time
+    double TD;      // Transmission Delay
+    double ED;      // Error Delay
+    double DD;      // Duplication Delay
+    double LP;      // Loss Probability
 
-    int * errorCodes;
-    int errorFreeLine;
+    int * errorCodes;           // An array if size "WS" used to store the errorCode mapped to the appropriate sequence number
+    simtime_t * timeoutsAt;     // An array if size "WS" used to store the timeout for each message sent mapped to the appropriate sequence number
+    int errorFreeLine;          // The integer storing the index of the line to send free of error in case of Timeout or NACK
 
     // A method that sets the parameters when the message is an initialization message returning the start time
     void initializeNode(cMessage *msg);
@@ -81,17 +89,14 @@ class Node : public cSimpleModule
     void startProcessing();
     void applyEffectAndSend();
     void setTimeout();
+    void terminateConnection();
 
     // Methods used by receiver for processing-sending
     void processReceivedMessage();
     void sendReplyMessage();
-
-    // Destructor used for clearing all messages in the global queue
-    ~Node();
 };
 
 int lineCount;                  // Used to determine the last line read
-std::queue<cMessage*> mQueue;   // A queue used to delete all messages when the simulation ends
 
 // A function used to read
 void readLineFromFile(int nodeNumber, int &errorCode, std::string &message);
