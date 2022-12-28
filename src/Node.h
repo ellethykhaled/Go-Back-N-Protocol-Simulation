@@ -45,7 +45,6 @@ class Node : public cSimpleModule
     int nodeNumber;
     bool isSender;
     bool isProcessing;
-    simtime_t whenFree;
 
     // Used in case of sender
     FrameMessage * messageToSend;           // Used to be sent as the main message
@@ -60,6 +59,8 @@ class Node : public cSimpleModule
     FrameMessage * receivedMessage;         // Used to hold the received message
     FrameMessage * messageToProcess;        // Used to gold the message being processed
     int expectedSequenceNumber;             // Holds the number of the next frame to accept
+
+    simtime_t whenFree;                     // Holds the time at which the received is free next
 
     simtime_t SIM_MANIP = 0.01;             // A number used to manipulate the simulation at receiver
                                             // The received gives undefined errors when processing two messages at the same time
@@ -86,13 +87,13 @@ class Node : public cSimpleModule
     void handleReceiver(cMessage *msg);
 
     // Methods used by sender for processing-sending
-    void startProcessing();
+    void senderStartProcessing();
     void applyEffectAndSend();
     void setTimeout();
     void terminateConnection();
 
     // Methods used by receiver for processing-sending
-    void processReceivedMessage();
+    void receiverStartProcessing();
     void sendReplyMessage();
 };
 

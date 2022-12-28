@@ -33,8 +33,9 @@ void Node::initializeNode(cMessage *msg)
     {
         if (receivedMessage->getStartingNode() == nodeNumber)
         {
-            // Setting the sender node parameters
             isSender = true;
+
+            // Setting the sender node parameters from the omnetpp.ini
             WS = receivedMessage->getWS();
             TO = receivedMessage->getTO();
             PT = receivedMessage->getPT();
@@ -42,15 +43,23 @@ void Node::initializeNode(cMessage *msg)
             ED = receivedMessage->getED();
             DD = receivedMessage->getDD();
 
+            // Initializing the error and timeout arrays
             errorCodes = new int[WS];
             timeoutsAt = new simtime_t[WS];
             for (int i = 0; i < WS; i++)
                 timeoutsAt[i] = INF;        // A great time instance
-            lastAckReceived = WS - 1;
-            errorFreeLine = -1;
-            // Returns the actual start time in case of being the sender
-            double startTime = receivedMessage->getStartTime();
+
+            // Initializing the message used in case of timeouts
             timeoutMessage = new cMessage(TIMEOUT.c_str());
+
+            // Setting the last acknowledgment received by the greatest sequence number available
+            lastAckReceived = WS - 1;
+
+            // No error free lines
+            errorFreeLine = -1;
+
+            // Schedule a dummy message at the start time specified by the co-ordinator to start the actual simulation
+            double startTime = receivedMessage->getStartTime();
             cMessage * awaking = new cMessage(FIRST.c_str());
             scheduleAt(simTime() + startTime, awaking);
         }
@@ -70,53 +79,60 @@ void Node::initializeNode(cMessage *msg)
 
 void Node::handleSender(cMessage *msg)
 {
-    // In case of initialization from co-ordintor
+    // Handle the initialization message sent by the co-ordinator
     if (strcmp(msg->getName(), INIT.c_str()) == 0)
     {
         initializeNode(msg);
         return;
     }
 
-    // In case of self awaking message (scheduleAt)
+    // Handle the self awaking message received when the processing is done
     if (strcmp(msg->getName(), PROCESS_S.c_str()) == 0)
     {
         applyEffectAndSend();
         isProcessing = false;
         setTimeout();
+
+        // This condition is used to return from the sender handler in case the window is full of messages
         if (sequenceNumber == lastAckReceived)
             return;
     }
 
-    // In case of TIMEOUT
+    // Handle the self awaking message received when there is timeout in order to "Go Back N"
     if (strcmp(msg->getName(), TIMEOUT.c_str()) == 0)
     {
-        // Go back N
+        // This variable holds the sequence number of the acknowledgment that should have been received
         int failedSequenceNumber = sequenceNumber + 1;
         if (failedSequenceNumber == WS)
             failedSequenceNumber = 0;
 
-        EV << "Timeout event at time [" << simTime() << "], at Node[" << nodeNumber << "] with lineCount " << lineCount << " and minimumLineCount " << minimumLineCount << " for frame with seq_num = [" << failedSequenceNumber << "]\n";
+        EV << "Timeout event at time [" << simTime() << "], at Node[" << nodeNumber << "] for frame with seq_num = [" << failedSequenceNumber << "]\n";
 
         if (!endOfMessages)
-            lineCount -= WS;        // Should get back to the correct line
+            lineCount -= WS;                    // Go back N in case of not reaching the end of the file
         else
-            lineCount = minimumLineCount - 1;
+            lineCount = minimumLineCount - 1;   // In case of the end of the file, reach the minimumLineCount - 1 (as it does hold the lower bound + 1 in this case)
+
+        // line count has a minimum value of 0
         if (lineCount < 0)
             lineCount = 0;
-//        lineCount = minimumLineCount;
-        errorFreeLine = lineCount;
+
+        errorFreeLine = lineCount;              // Set the error free line with the current line count that will be read
+
+        // Resetting all timeouts
         for (int i = 0; i < WS; i++)
             timeoutsAt[i] = INF;
         endOfMessages = false;
-        EV << "Going back to line " << lineCount <<"\n";
     }
 
-    // In case of acknowledge or not acknowledge from the receiver
+    // Handle the message sent by the receiver
     if (strcmp(msg->getName(), COMPLETE_R.c_str()) == 0)
     {
+        // Cancel the scheduled timeout event
         cancelEvent(timeoutMessage);
-//        EV << "At time "<< simTime() << " cancelled timeout\n";
+
         receivedMessage = check_and_cast<FrameMessage *>(msg);
+
         if (receivedMessage->getFrameType() == ACK)
         {
             for (int i = 0; i < WS; i++)
@@ -124,56 +140,71 @@ void Node::handleSender(cMessage *msg)
                 lastAckReceived++;
                 if (lastAckReceived == WS)
                     lastAckReceived = 0;
+
+                // Clear any timeout saved for any current sequence number and all previous sequence numbers
+                // i.e. if the messages with sequence numbers 0, 1, 2, 3 are sent, and an Acknowledgment with sequence number 2 is received
+                // Clear timeouts for 0, 1, 2 & leave the timeout for 3 as it is
                 timeoutsAt[lastAckReceived] = INF;
                 if (lastAckReceived == receivedMessage->getHeader())
                     break;
             }
-            // MimimumLineCount should be adjusted
+
+            // Calculates the new lower bound (only correct not in the case of the end of the file)
             minimumLineCount = lineCount - WS;
             if (minimumLineCount < 0)
                 minimumLineCount = 0;
             minimumLineCount += lastAckReceived + 1;
-//            lastAckReceived = receivedMessage->getHeader();
+
             setTimeout();
         }
         else
         {
             int receivedNackNumber = receivedMessage->getHeader();
-            while (receivedNackNumber != lineCount % WS)
+
+            // "Going Back" till the line count reaches the line with message that caused not acknowledgment
+            while (receivedNackNumber != lineCount % WS || lineCount == 0)
                 lineCount--;
+
+            // Force the line that caused an error to be error free
             errorFreeLine = lineCount;
-            EV << "At time [" << simTime() << "], at Node[" << nodeNumber << "] received NACK with seq_num = [" << lastAckReceived << "]\n";
+
+//            EV << "At time [" << simTime() << "], at Node[" << nodeNumber << "] received NACK with seq_num = [" << lastAckReceived << "]\n";
+
+            // Return and wait for its timeout
             return;
         }
-        EV << "At time [" << simTime() << "], at Node[" << nodeNumber << "] received ACK with seq_num = [" << lastAckReceived << "]\n";
-        delete receivedMessage;
+//        EV << "At time [" << simTime() << "], at Node[" << nodeNumber << "] received ACK with seq_num = [" << lastAckReceived << "]\n";
+
+        // If the acknowledgment is received during processing, wait for next self awaking message, else continue the handler
         if (isProcessing)
             return;
     }
 
-    // Sets the node for the next event
+    // Checking if the sender has reached the end of the input file
     if (endOfMessages)
     {
+        // Checking if there are any timeouts set. A set timeout indicates that some acknowledgment is not received yet
         bool isFinale = true;
         for (int i = 0; i < WS; i++)
             if (timeoutsAt[i] < INF)
                 isFinale = false;
 
+        // If there are no scheduled timeouts found, terminate the connection
         if (isFinale)
-        {
             terminateConnection();
-        }
 
         return;
     }
 
     messageToSend = new FrameMessage(PROCESS_S.c_str());
 
-    // Reading the next errorCode and message
     int errorCode;
     std::string message;
 
+    // Reading the next errorCode and message
     readLineFromFile(nodeNumber, errorCode, message);
+
+    // Enforce an error-free channel
     if (errorFreeLine == lineCount - 1)
         errorCode = 0;
     // If there is nothing more to read
@@ -188,29 +219,32 @@ void Node::handleSender(cMessage *msg)
     std::string parity = calculateParityByte(message);
 
     // Setting the Data
-    sequenceNumber = (lineCount - 1) % WS;       // Rotating sequence number
-    messageToSend->setHeader(sequenceNumber);
-    messageToSend->setPayload(message.c_str());
-    messageToSend->setTrailer(parity.c_str());
-    messageToSend->setFrameType(DATA);
-    messageToSend->setAckNumber(sequenceNumber);
-    errorCodes[sequenceNumber] = errorCode;
+    sequenceNumber = (lineCount - 1) % WS;          // Rotating sequence number
+    messageToSend->setHeader(sequenceNumber);       // Sequence number
+    messageToSend->setPayload(message.c_str());     // Stuffed message
+    messageToSend->setTrailer(parity.c_str());      // Parity Byte
+    messageToSend->setFrameType(DATA);              // Data message
+    messageToSend->setAckNumber(sequenceNumber);    // Sequence number, again
+
+    errorCodes[sequenceNumber] = errorCode;         // The error code
+
+    // Set the timeout at the current time in addition to the processing time and timeout duration
     timeoutsAt[sequenceNumber] = simTime() + PT + TO;
 
-    startProcessing();
+    senderStartProcessing();
     isProcessing = true;
 }
 
 void Node::handleReceiver(cMessage *msg)
 {
-    // In case the message is just for initialization, return
+    // Handle the initialization message sent by the co-ordinator
     if (strcmp(msg->getName(), INIT.c_str()) == 0)
     {
        initializeNode(msg);
        return;
     }
 
-    // In case of self awaking message (scheduleAt) [finished Processing]
+    // Handle the self awaking message received when the processing is done
     if (strcmp(msg->getName(), PROCESS_R.c_str()) == 0)
     {
         receivedMessage = check_and_cast<FrameMessage *>(msg);
@@ -219,19 +253,17 @@ void Node::handleReceiver(cMessage *msg)
         return;
     }
 
-
+    // Handle the message sent by the sender
     if (strcmp(msg->getName(), COMPLETE_S.c_str()) == 0)
     {
+        // Ignore the message in case the receiver is processing
        if (simTime() < whenFree)
           return;
 
        receivedMessage = check_and_cast<FrameMessage *>(msg);
        if (receivedMessage != nullptr)
        {
-//           int nextExpected = expectedSequenceNumber + 1;
-//           if (nextExpected == WS)
-//               nextExpected = 0;
-//           bool iAmTheChosenOne = receivedMessage->getHeader() == nextExpected && whenFree == simTime();
+           // Ignore the message if it has a different sequence number
            if (receivedMessage->getHeader() != expectedSequenceNumber)
            {
 //               EV << "At time " << simTime() <<" received refused the message, expected " << expectedSequenceNumber << " and got " << receivedMessage->getHeader() << endl;
@@ -239,27 +271,33 @@ void Node::handleReceiver(cMessage *msg)
            }
 
            isProcessing = true;
-           processReceivedMessage();
+           receiverStartProcessing();
        }
     }
 }
 
-void Node::startProcessing()
+void Node::senderStartProcessing()
 {
     EV << "At time [" << simTime() << "], Node [" << nodeNumber << "] introducing channel error with code = [" << errorCodes[messageToSend->getHeader()] << "]" << endl;
     isProcessing = true;
+
+    // Schedule self awaking message after time PT
     scheduleAt(simTime() + PT, messageToSend);
 }
 
 void Node::applyEffectAndSend()
 {
+    // Duplicate message to avoid multiple use of the message
     FrameMessage * actualMessageToSend = messageToSend->dup();
     actualMessageToSend->setName(COMPLETE_S.c_str());
+
+    // The next five variables are used just for the display message
     int sNumber = actualMessageToSend->getHeader();
     std::string isLost = "No";
     int duplicateNumber = 0;
     int delay = 0;
     int modifiedByteNumber = -1;
+
     switch (errorCodes[sNumber])
     {
         case 0:         // No Error
@@ -417,64 +455,78 @@ void Node::applyEffectAndSend()
         default:
             break;
     }
-    EV << "At time [" << simTime() << "], Node [" << nodeNumber << "] read line [" << lineCount - 1 << "] [sent] frame with seq_num = [" << actualMessageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
+
+    // Message sent in all cases
+    EV << "At time [" << simTime() << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << actualMessageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
+    // Message sent in case of duplication
     if (duplicateNumber++ > 0)
         EV << "At time [" << simTime() + DD << "], Node [" << nodeNumber << "] [sent] frame with seq_num = [" << actualMessageToSend->getHeader() << "] and payload = [" << messageToSend->getPayload() << "] and trailer = [" << messageToSend->getTrailer() << "], Modified [" << modifiedByteNumber << "], Lost [" << isLost << "], Duplicate [" <<  duplicateNumber << "], Delay [" << delay << "]\n";
 
 }
 
-void Node::processReceivedMessage()
+void Node::receiverStartProcessing()
 {
     receivedMessage->setName(PROCESS_R.c_str());
+    // Set the time instance at which the receiver is free again (after processing)
     whenFree = simTime() + PT;
+
+    // SIM_MANIP here is used to enforce that the message being processed is processed
+    // and a reply is sent (acknowledgment or not acknowledgment) before a new message is received from the sender
     scheduleAt(whenFree - SIM_MANIP, receivedMessage);
 }
 
 void Node::sendReplyMessage()
 {
-    // Receiver should only accept the expected frame
-
+    // The next four variables define the type of the message and whether it is lost or not
     std::string isAck = "ACK";
     std::string parity = calculateParityByte(receivedMessage->getPayload());
     int ackNum = receivedMessage->getHeader();
-    if (ackNum == WS)
-        ackNum = 0;
+    std::string isLost = "No";
+
+    // In case the calculated parity does not match the received parity, set as Not acknowledgment
     if (strcmp(parity.c_str(), receivedMessage->getTrailer()) != 0)
         isAck = "NACK";
-    std::string isLost = "No";
-    int chance = rand() % 9;
+    // Generate an integer from 0 to 9
+    int chance = rand() % 10;
+    // If the number is less than the loss probability * 10 (say 1), the reply is lost
     if (chance < LP * 10)
         isLost = "Yes";
     EV << "At time [" << simTime() + SIM_MANIP << "], Node[" << nodeNumber << "] Sending [" << isAck << "] with number [" << ackNum << "], loss [" << isLost << "]\n";
 
     receivedMessage->setName(COMPLETE_R.c_str());
-    receivedMessage->setHeader(ackNum);
-    receivedMessage->setPayload("");
+    receivedMessage->setHeader(ackNum);         // Sequence number
+    receivedMessage->setPayload("");            // No payload (message)
+    receivedMessage->setAckNumber(ackNum);      // Redundant sequence Number
+
     if (strcmp(isAck.c_str(), "ACK") == 0)
     {
+        // Set the message type as acknowledgment
         receivedMessage->setFrameType(ACK);
+
+        // Increment the expected sequence number
         expectedSequenceNumber++;
         if (expectedSequenceNumber == WS)
             expectedSequenceNumber = 0;
     }
+    // Set the message type as not acknowledgment
     else
         receivedMessage->setFrameType(NACK);
 
+    // In case it is not lost, send the message (considering the simulation manipulation)
     if (strcmp(isLost.c_str(), "No") == 0)
         sendDelayed(receivedMessage, TD + SIM_MANIP, "out");
 }
 
 void Node::setTimeout()
-{ // Timeout should be set according to the oldest frame sent
-    // Cancel any scheduled timeout and set a new one
-    int min = 0;
+{
+    // Cancel any scheduled timeout and set a new one which is the minimum within the saved timeouts
+    int minIndex = 0;
     for (int i = 0; i < WS; i++)
-        if (timeoutsAt[i] < timeoutsAt[min])
-            min = i;
+        if (timeoutsAt[i] < timeoutsAt[minIndex])
+            minIndex= i;
     if (timeoutMessage->isScheduled())
         cancelEvent(timeoutMessage);
-    scheduleAt(timeoutsAt[min], timeoutMessage);
-//    scheduleAt(simTime() + TO, timeoutMessage);
+    scheduleAt(timeoutsAt[minIndex], timeoutMessage);
 }
 
 void Node::terminateConnection()
@@ -519,6 +571,7 @@ void readLineFromFile(int nodeNumber, int &errorCode, std::string &message)
 
 std::string getStuffedMessage(std::string message)
 {
+    // If the character is '$' or '/' add '/' before it
     std::string result = "$";
     for (auto c : message){
         if (c == '$' || c == '/')
@@ -529,6 +582,7 @@ std::string getStuffedMessage(std::string message)
 
 }
 
+// Used for testing
 void printBinary(int n)
 {
     int binaryNum[10];
@@ -554,10 +608,6 @@ std::string calculateParityByte(std::string message)
 
     for (int i = 1; i < message.length(); i++)
         frameRepresentation[message.length()].operator ^=(frameRepresentation[i]);
-
-//    int i = 0;
-//    for (auto c : message)
-//        EV << c << " " << frameRepresentation[i++] << endl;
 
     return frameRepresentation[message.length()].to_string();
 }
